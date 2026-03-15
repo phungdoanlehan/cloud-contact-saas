@@ -1,0 +1,198 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Customer Contact SaaS</title>
+    <!-- Nhúng thư viện Bootstrap 5 (Không cần cài đặt) -->
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.10.5/font/bootstrap-icons.css">
+</head>
+<body class="bg-light">
+    <div class="container mt-5">
+        <h2 class="text-center mb-4 text-primary"><i class="bi bi-cloud-check"></i> Cloud Contact Management SaaS</h2>
+
+        <!-- Hộp thoại thông báo (Bảo mật: Không dùng alert của trình duyệt) -->
+        <div id="notification-box" class="alert d-none shadow-sm" role="alert"></div>
+
+        <div class="row">
+            <!-- PHẦN 1: FORM THÊM KHÁCH HÀNG (Bên trái) -->
+            <div class="col-md-4 mb-4">
+                <div class="card shadow-sm border-0">
+                    <div class="card-header bg-primary text-white">
+                        <h5 class="mb-0"><i class="bi bi-person-plus"></i> Add New Customer</h5>
+                    </div>
+                    <div class="card-body">
+                        <!-- Form này sẽ gửi POST request tới endpoint /add của Loan -->
+                        <form action="/add" method="POST">
+                            <div class="mb-3">
+                                <label class="form-label fw-bold">Full Name</label>
+                                <input type="text" name="fullname" class="form-control" placeholder="John Doe" required>
+                            </div>
+                            <div class="mb-3">
+                                <label class="form-label fw-bold">Address</label>
+                                <input type="text" name="address" class="form-control" placeholder="123 Cloud Street" required>
+                            </div>
+                            <div class="mb-3">
+                                <label class="form-label fw-bold">Phone Number</label>
+                                <input type="text" name="phone" class="form-control" placeholder="+84987654321" required>
+                            </div>
+                            <div class="mb-3">
+                                <label class="form-label fw-bold">Email Address</label>
+                                <input type="email" name="email" class="form-control" placeholder="john@example.com" required>
+                            </div>
+                            <button type="submit" class="btn btn-primary w-100 fw-bold">Add Customer</button>
+                        </form>
+                    </div>
+                </div>
+            </div>
+
+            <!-- PHẦN 2: BẢNG DANH SÁCH & GỬI TIN NHẮN (Bên phải) -->
+            <div class="col-md-8">
+                <!-- Bảng Danh Sách -->
+                <div class="card shadow-sm border-0 mb-4">
+                    <div class="card-header bg-dark text-white d-flex justify-content-between align-items-center">
+                        <h5 class="mb-0"><i class="bi bi-people"></i> Customer List</h5>
+                    </div>
+                    <div class="card-body table-responsive">
+                        <table class="table table-hover align-middle">
+                            <thead class="table-light">
+                                <tr>
+                                    <!-- Nút Tick chọn tất cả -->
+                                    <th><input class="form-check-input border-secondary" type="checkbox" id="selectAll"></th>
+                                    <th>Name</th>
+                                    <th>Address</th>
+                                    <th>Phone</th>
+                                    <th>Email</th>
+                                    <th>Action</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                <!-- Biến customers được Backend của Loan truyền sang -->
+                                <% if (typeof customers !== 'undefined' && customers.length > 0) { %>
+                                    <% customers.forEach(function(customer) { %>
+                                    <tr>
+                                        <td>
+                                            <!-- Checkbox cho từng dòng, lưu trữ ngầm số điện thoại và email -->
+                                            <input class="form-check-input customer-checkbox border-secondary" type="checkbox"
+                                                data-phone="<%= customer.phone %>"
+                                                data-email="<%= customer.email %>">
+                                        </td>
+                                        <td class="fw-semibold"><%= customer.fullname %></td>
+                                        <td><%= customer.address %></td>
+                                        <td><%= customer.phone %></td>
+                                        <td><%= customer.email %></td>
+                                        <td>
+                                            <form action="/delete/<%= customer.id %>" method="POST" class="d-inline">
+                                                <button type="submit" class="btn btn-sm btn-outline-danger" title="Delete"><i class="bi bi-trash"></i></button>
+                                            </form>
+                                        </td>
+                                    </tr>
+                                    <% }); %>
+                                <% } else { %>
+                                    <tr>
+                                        <td colspan="6" class="text-center text-muted py-4">No customers found. Please add a new customer!</td>
+                                    </tr>
+                                <% } %>
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+
+                <!-- Khu vực Gửi SMS/Email -->
+                <div class="card shadow-sm border-0">
+                    <div class="card-header bg-info text-dark">
+                        <h5 class="mb-0 fw-bold"><i class="bi bi-send"></i> Send Mass Communication</h5>
+                    </div>
+                    <div class="card-body bg-light">
+                        <div class="mb-3">
+                            <label class="form-label fw-bold">Message Content</label>
+                            <textarea id="messageContent" class="form-control" rows="3" placeholder="Type your marketing message or notification here..."></textarea>
+                        </div>
+                        <div class="d-flex gap-2">
+                            <button onclick="sendCommunication('sms')" class="btn btn-warning fw-bold flex-grow-1">
+                                <i class="bi bi-chat-text"></i> Send SMS to Selected
+                            </button>
+                            <button onclick="sendCommunication('email')" class="btn btn-success fw-bold flex-grow-1">
+                                <i class="bi bi-envelope"></i> Send Email to Selected
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- PHẦN 3: JAVASCRIPT XỬ LÝ LOGIC UI CỦA THÀNH -->
+    <script>
+        // 1. Chức năng Tick chọn tất cả khách hàng
+        document.getElementById('selectAll').addEventListener('change', function() {
+            const checkboxes = document.querySelectorAll('.customer-checkbox');
+            checkboxes.forEach(cb => cb.checked = this.checked);
+        });
+
+        // 2. Hàm hiển thị thông báo đẹp mắt (thay thế cho alert() xấu xí)
+        function showNotification(msg, isSuccess) {
+            const box = document.getElementById('notification-box');
+            box.textContent = msg;
+            box.className = `alert ${isSuccess ? 'alert-success' : 'alert-danger'} shadow-sm`;
+            box.classList.remove('d-none');
+            // Tự động ẩn sau 4 giây
+            setTimeout(() => box.classList.add('d-none'), 4000);
+            window.scrollTo(0, 0); // Cuộn lên đầu để xem thông báo
+        }
+
+        // 3. Hàm cốt lõi: Gom Checkbox và Gửi đi
+        async function sendCommunication(type) {
+            const message = document.getElementById('messageContent').value;
+            
+            // Validate: Chưa nhập nội dung
+            if (!message.trim()) {
+                showNotification("Error: Please enter a message content!", false);
+                return;
+            }
+
+            // Lấy tất cả những ô checkbox ĐANG ĐƯỢC TICK
+            const checkboxes = document.querySelectorAll('.customer-checkbox:checked');
+            if (checkboxes.length === 0) {
+                showNotification("Error: Please select at least one customer!", false);
+                return;
+            }
+
+            // Khởi tạo mảng trống để chứa SĐT hoặc Email
+            const targets = [];
+            checkboxes.forEach(cb => {
+                if (type === 'sms') targets.push(cb.getAttribute('data-phone'));
+                if (type === 'email') targets.push(cb.getAttribute('data-email'));
+            });
+
+            // Xác định gọi API nào của Loan
+            const endpoint = type === 'sms' ? '/send-sms' : '/send-email';
+            // Tạo gói hàng JSON
+            const payload = type === 'sms' ? { phones: targets, message: message } : { emails: targets, message: message };
+
+            try {
+                // Hiển thị trạng thái đang gửi
+                showNotification(`Sending ${type.toUpperCase()}... Please wait.`, true);
+
+                // Dùng fetch() bắn data sang Backend
+                const response = await fetch(endpoint, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(payload)
+                });
+
+                const data = await response.json();
+                if (response.ok) {
+                    showNotification(`Success: ${type.toUpperCase()} sent successfully!`, true);
+                    document.getElementById('messageContent').value = ''; // Xóa trắng ô chữ
+                } else {
+                    showNotification(`Server Error: ${data.error || 'Failed to send'}`, false);
+                }
+            } catch (error) {
+                showNotification("Network Error: Could not connect to the server!", false);
+            }
+        }
+    </script>
+</body>
+</html>
