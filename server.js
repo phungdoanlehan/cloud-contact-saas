@@ -1,58 +1,37 @@
-// ======================= LOAD ENVIRONMENT VARIABLES =======================
-// Load environment variables from .env file into process.env [cite: 93, 110]
 require("dotenv").config();
-
-// ======================= IMPORT REQUIRED LIBRARIES =======================
 const express = require("express");
 const mysql = require("mysql2/promise");
 const twilio = require("twilio");
 const sgMail = require("@sendgrid/mail");
 const path = require("path");
 
-// ======================= INITIALIZE EXPRESS APP =======================
 const app = express();
 
-// ======================= MIDDLEWARE =======================
-// Parse JSON and form data [cite: 92]
+// Middleware
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
-
-// Set view engine to EJS [cite: 92]
 app.set("view engine", "ejs");
 app.set("views", path.join(__dirname, "views"));
 
-// ======================= CONFIGURE SENDGRID =======================
-// Use the SG API Key and Sender Email from .env [cite: 102, 103]
+// Config API Keys
 sgMail.setApiKey(process.env.SENDGRID_API_KEY);
+const twilioClient = twilio(process.env.TWILIO_SID, process.env.TWILIO_AUTH_TOKEN);
 
-// ======================= CONFIGURE TWILIO =======================
-// Use the Twilio SID and Token from .env [cite: 99, 100]
-const twilioClient = twilio(
-  process.env.TWILIO_SID,
-  process.env.TWILIO_AUTH_TOKEN
-);
-
-// ======================= GLOBAL DATABASE CONNECTION =======================
 let db;
 
-// ======================= DATABASE INITIALIZATION FUNCTION =======================
-// This function creates the database and table if they do not already exist [cite: 111]
+// ======================= DATABASE INITIALIZATION =======================
 async function initDatabase() {
   try {
-    // Connect to MySQL server using credentials from .env [cite: 95, 96, 97]
     const connection = await mysql.createConnection({
       host: process.env.DB_HOST,
       user: process.env.DB_USER,
       password: process.env.DB_PASS
     });
 
-    // Create database if it does not exist [cite: 98, 111]
     await connection.query(`CREATE DATABASE IF NOT EXISTS saasdb`);
-
-    // Switch to the saasdb database
     await connection.query(`USE saasdb`);
 
-    // Create customers table if it does not exist [cite: 111]
+    // 1. Bảng Khách hàng
     await connection.query(`
       CREATE TABLE IF NOT EXISTS customers (
         id INT AUTO_INCREMENT PRIMARY KEY,
@@ -63,26 +42,52 @@ async function initDatabase() {
       )
     `);
 
+    // 2. Bảng Người dùng (Đăng nhập) - Phục vụ chức năng Login sau này
+    await connection.query(`
+      CREATE TABLE IF NOT EXISTS users (
+        id INT AUTO_INCREMENT PRIMARY KEY,
+        username VARCHAR(100) UNIQUE NOT NULL,
+        password VARCHAR(255) NOT NULL,
+        role VARCHAR(20) DEFAULT 'staff'
+      )
+    `);
+
+    // 3. Bảng Lịch sử gửi tin (Logs)
+    await connection.query(`
+      CREATE TABLE IF NOT EXISTS communication_logs (
+        id INT AUTO_INCREMENT PRIMARY KEY,
+        customer_id INT,
+        user_id INT,
+        type ENUM('sms', 'email') NOT NULL,
+        recipient_value VARCHAR(255),
+        content TEXT,
+        status VARCHAR(50),
+        sent_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        FOREIGN KEY (customer_id) REFERENCES customers(id) ON DELETE SET NULL,
+        FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE SET NULL
+      )
+    `);
+
     db = connection;
-    console.log("Database and table ready.");
+    console.log("Database and All Tables Ready.");
   } catch (error) {
     console.error("Database initialization error:", error);
   }
 }
 
-// ======================= HOME PAGE ROUTE =======================
-// This route retrieves all customers and renders the index.ejs page [cite: 112]
+// ======================= ROUTES =======================
+
+// Xem danh sách khách hàng
 app.get("/", async (req, res) => {
   try {
-    const [rows] = await db.query("SELECT * FROM customers");
+    const [rows] = await db.query("SELECT * FROM customers ORDER BY id DESC");
     res.render("index", { customers: rows });
   } catch (error) {
     res.status(500).send("Error loading customers");
   }
 });
 
-// ======================= ADD CUSTOMER API =======================
-// This function inserts a new customer into the database [cite: 113]
+// Thêm khách hàng
 app.post("/add", async (req, res) => {
   try {
     const { fullname, address, phone, email } = req.body;
@@ -96,71 +101,76 @@ app.post("/add", async (req, res) => {
   }
 });
 
-// ======================= DELETE CUSTOMER API =======================
-// This function deletes a customer by id [cite: 113]
+// Xóa khách hàng
 app.post("/delete/:id", async (req, res) => {
   try {
-    const id = req.params.id;
-    await db.query("DELETE FROM customers WHERE id = ?", [id]);
+    await db.query("DELETE FROM customers WHERE id = ?", [req.params.id]);
     res.redirect("/");
   } catch (error) {
     res.status(500).send("Error deleting customer");
   }
 });
 
-// ======================= SEND SMS API =======================
-// This function sends SMS messages to selected customers using Twilio [cite: 114, 115]
+// Gửi SMS & Lưu Log
 app.post("/send-sms", async (req, res) => {
   try {
     const { phones, message } = req.body;
-    // Loop through each selected phone number to send SMS [cite: 114]
     for (let phone of phones) {
       if (!phone) continue;
+      
+      // Gửi qua Twilio
       await twilioClient.messages.create({
         body: message,
         from: process.env.TWILIO_PHONE,
         to: phone
       });
+
+      // Ghi Log vào DB
+      await db.query(
+        "INSERT INTO communication_logs (type, recipient, content, status) VALUES ('sms', ?, ?, 'success')",
+        [phone, message]
+      );
     }
-    res.json({ message: "SMS sent to all selected customers." });
+    res.json({ message: "SMS sent and logged successfully." });
   } catch (error) {
     console.error(error);
-    res.status(500).json({ error: "SMS sending failed" });
+    res.status(500).json({ error: "SMS failed" });
   }
 });
 
-// ======================= SEND EMAIL API =======================
-// This function sends emails to selected customers using SendGrid [cite: 116, 117]
+// Gửi Email & Lưu Log
 app.post("/send-email", async (req, res) => {
   try {
     const { emails, message } = req.body;
-    // Loop through each selected email to send message [cite: 117]
     for (let email of emails) {
       if (!email) continue;
+      
       const msg = {
         to: email,
         from: process.env.SENDER_EMAIL,
         subject: "Cloud Contact SaaS Notification",
         text: message
       };
+
       await sgMail.send(msg);
+
+      // Ghi Log vào DB
+      await db.query(
+        "INSERT INTO communication_logs (type, recipient, content, status) VALUES ('email', ?, ?, 'success')",
+        [email, message]
+      );
     }
-    res.json({ message: "Emails sent to all selected customers." });
+    res.json({ message: "Emails sent and logged successfully." });
   } catch (error) {
     console.error(error);
-    res.status(500).json({ error: "Email sending failed" });
+    res.status(500).json({ error: "Email failed" });
   }
 });
 
-// ======================= START SERVER =======================
-// This function starts the Express server after initializing the database 
 async function startServer() {
   await initDatabase();
   const PORT = process.env.PORT || 3000;
-  app.listen(PORT, () => {
-    console.log(`Server running on port ${PORT}`);
-  });
+  app.listen(PORT, () => console.log(`Server running on port ${PORT}`));
 }
 
-// Run the server 
 startServer();
